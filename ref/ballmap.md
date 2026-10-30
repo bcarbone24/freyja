@@ -12,9 +12,11 @@ python3 tools/ballmap.py > ref/ballmap.md
 ## I/O-bank architecture
 
 This package has **six HR I/O banks** — 13, 14, 15, 16, 34 and 35 — 300 user I/O total.
-`VCCO` is shared by every pin in a bank. Odin uses bank 14 at fixed 3.3V,
-bank 13 for 5V BUS 1, banks 15 and 34 as selectable extension domains, and reserves
-banks 16 and 35 for later base-board peripherals.
+`VCCO` is shared by every pin in a bank. Odin uses bank 13 at 1.8V (+1V8_IO)
+for the four PSRAMs and the A side of both 5V bus translators, bank 14 at
+fixed 3.3V, banks 15 and 34 as selectable extension domains, bank 16 at
+2.5V for the network (RGMII and the two LVDS link ports), and bank 35 at
+3.3V for HDMI, the SDRAM data bus and the PHY control pins.
 
 | Bank | HR I/O | Diff pairs | MRCC | SRCC |
 |---|---|---|---|---|
@@ -26,21 +28,27 @@ banks 16 and 35 for later base-board peripherals.
 | 35 | 50 | 24 | 4 | 4 |
 
 **Bank 14 is not free.** It carries the master-SPI config flash pins and the
-`PUDC_B` strap, so its `VCCO` is pinned at 3.3V by the flash. That makes it
-the home for everything else fixed at 3.3V — PSRAM, the supervisor sideband,
-and 5V BUS 0. Bank 13 carries 5V BUS 1. Banks 15 and 34 are the two settable extension
-domains, four slots each. The other two HR banks are powered at 3.3V but
-carry no signals in this revision.
+`PUDC_B` strap, so its `VCCO` is pinned at 3.3V by the flash. It also carries
+the supervisor sideband, the fabric clock, the SDRAM address bus, the MRAM
+and the microSD socket. Bank 13 runs at 1.8V from +1V8_IO: the four
+APS6404L-SQN PSRAMs and both 5V bus translators (their A side and DIR/OE).
+Banks 15 and 34 are the two settable extension domains, four slots each.
+Bank 16 runs at 2.5V: RGMII to the RTL8211FD-CG and the eight LVDS_25 link
+pairs. Bank 35 is at 3.3V: HDMI, the SDRAM data and control lines, and the
+two PHY control pins (PHYRSTB, INTB). The PSRAM, SDRAM, MRAM, microSD and
+PHY control balls are hand-chosen tables in tools/alloc.py; inside each
+bank the allocator takes the shallowest balls first for the rest.
 
 ## Allocation
 
 | Bank | VCCO | Contents |
 |---|---|---|
-| 14 | **fixed 3.3V** | config flash, PSRAM x4, supervisor sideband, 5V BUS 0 |
-| 13 | fixed 3.3V | 5V BUS 1 |
+| 14 | **fixed 3.3V** | SYS_CLK (50 MHz oscillator), config flash, supervisor sideband, SDRAM address, MRAM, microSD |
+| 13 | **fixed 1.8V** (+1V8_IO) | PSRAM x4, 5V BUS 0, 5V BUS 1 |
 | 15 | **settable** 3.3 / 2.5 / 1.8 | slots A B C D |
 | 34 | **settable** 3.3 / 2.5 / 1.8 | slots E F G H |
-| 16, 35 | fixed 3.3V | reserved for future base-board peripherals |
+| 16 | **fixed 2.5V** | RGMII + MDIO to the PHY, LINK P and LINK Q |
+| 35 | fixed 3.3V | HDMI out: four TMDS_33 pairs and the TPD12S016 lines; SDRAM data and control; PHY_RESET_N, PHY_INT_N |
 
 ## Config flash and strap
 
@@ -56,28 +64,107 @@ carry no signals in this revision.
 `CCLK`, `PROGRAM_B`, `INIT_B`, `DONE`, `M[2:0]` and JTAG are bank 0
 dedicated pins — see the bank 0 table below.
 
-## PSRAM — four independent QSPI buses
+## System clock
+
+| Ball | Net | Package name |
+|---|---|---|
+| M21 | `SYS_CLK` | IO_L12P_T1_MRCC_14 |
+
+X4, 50 MHz CMOS, on an MRCC P ball so it reaches the bank's MMCMs; the
+pair's N ball is left free.
+
+## PSRAM — four independent QSPI buses, bank 13 at 1.8 V
 
 | Chip | SCK | CE# | IO0 | IO1 | IO2 | IO3 |
 |---|---|---|---|---|---|---|
-| PSRAM0 | N16 | N17 | R16 | R17 | K25 | K26 |
-| PSRAM1 | M20 | L20 | L24 | L25 | M24 | M25 |
-| PSRAM2 | L22 | L23 | M21 | M22 | N21 | N22 |
-| PSRAM3 | P20 | P21 | N23 | N24 | P19 | N19 |
+| PSRAM0 | T14 | T15 | T17 | T18 | U15 | U16 |
+| PSRAM1 | U14 | V14 | V16 | V17 | V18 | W18 |
+| PSRAM2 | T19 | U19 | V19 | W19 | T20 | U20 |
+| PSRAM3 | W20 | Y20 | W21 | Y21 | Y22 | Y23 |
 
 Each chip's six lines come from three adjacent differential pairs, so the
-group stays physically tight and length matching stays local.
+group stays physically tight and length matching stays local. Both MRCC
+pairs of the bank (U21/V21, U22/V22) are left free.
+
+## SDRAM — W9825G6KH-6, data in bank 35, address in bank 14
+
+| Ball | Net | Package name |
+|---|---|---|
+| C3 | `SDRAM_RAS_N` | IO_L17N_T2_35 |
+| D3 | `SDRAM_CS_N` | IO_L17P_T2_35 |
+| D6 | `SDRAM_DQ1` | IO_L1N_T0_AD4N_35 |
+| E3 | `SDRAM_WE_N` | IO_L18N_T2_35 |
+| E6 | `SDRAM_DQ0` | IO_L1P_T0_AD4P_35 |
+| F3 | `SDRAM_CAS_N` | IO_L18P_T2_35 |
+| F7 | `SDRAM_DQ7` | IO_L4N_T0_35 |
+| F8 | `SDRAM_DQ6` | IO_L4P_T0_35 |
+| G6 | `SDRAM_DQ9` | IO_L5N_T0_AD13N_35 |
+| G7 | `SDRAM_DQ5` | IO_L3N_T0_DQS_AD5N_35 |
+| G8 | `SDRAM_DQ3` | IO_L2N_T0_AD12N_35 |
+| G9 | `SDRAM_DQ11` | IO_L6N_T0_VREF_35 |
+| H4 | `SDRAM_UDQM` | IO_L9N_T1_DQS_AD7N_35 |
+| H6 | `SDRAM_DQ8` | IO_L5P_T0_AD13P_35 |
+| H7 | `SDRAM_DQ4` | IO_L3P_T0_DQS_AD5P_35 |
+| H8 | `SDRAM_DQ2` | IO_L2P_T0_AD12P_35 |
+| H9 | `SDRAM_DQ10` | IO_L6P_T0_35 |
+| J4 | `SDRAM_LDQM` | IO_L9P_T1_DQS_AD7P_35 |
+| J5 | `SDRAM_DQ13` | IO_L7N_T1_AD6N_35 |
+| J6 | `SDRAM_DQ12` | IO_L7P_T1_AD6P_35 |
+| K6 | `SDRAM_CKE` | IO_L10N_T1_AD15N_35 |
+| K7 | `SDRAM_CLK` | IO_L10P_T1_AD15P_35 |
+| K8 | `SDRAM_DQ15` | IO_L8N_T1_AD14N_35 |
+| L8 | `SDRAM_DQ14` | IO_L8P_T1_AD14P_35 |
+| M24 | `SDRAM_A8` | IO_L10P_T1_D14_14 |
+| M25 | `SDRAM_A4` | IO_L10N_T1_D15_14 |
+| M26 | `SDRAM_A0` | IO_L20N_T3_A07_D23_14 |
+| N23 | `SDRAM_A12` | IO_L15P_T2_DQS_RDWR_B_14 |
+| N24 | `SDRAM_A9` | IO_L15N_T2_DQS_DOUT_CSO_B_14 |
+| N26 | `SDRAM_A1` | IO_L20P_T3_A08_D24_14 |
+| P23 | `SDRAM_BA0` | IO_L17P_T2_A14_D30_14 |
+| P24 | `SDRAM_A10` | IO_L17N_T2_A13_D29_14 |
+| P25 | `SDRAM_A5` | IO_L19N_T3_A09_D25_VREF_14 |
+| P26 | `SDRAM_A2` | IO_L22N_T3_A04_D20_14 |
+| R23 | `SDRAM_BA1` | IO_L24N_T3_A00_D16_14 |
+| R25 | `SDRAM_A6` | IO_L19P_T3_A10_D26_14 |
+| R26 | `SDRAM_A3` | IO_L22P_T3_A05_D21_14 |
+| T24 | `SDRAM_A11` | IO_L21P_T3_DQS_14 |
+| T25 | `SDRAM_A7` | IO_L21N_T3_DQS_A06_D22_14 |
+
+CLK is an output on a plain ball (no MRCC/SRCC), through 22 ohm; CS and CKE
+are plain I/O with no configuration function. The address balls are the
+block of columns 23-26, rows M-T, that the PSRAMs left.
+
+## MRAM — MR25H10CDF, bank 14
+
+| Ball | Net | Package name |
+|---|---|---|
+| K25 | `MRAM_CS` | IO_L7P_T1_D09_14 |
+| K26 | `MRAM_SCK` | IO_L7N_T1_D10_14 |
+| L24 | `MRAM_SI` | IO_L9P_T1_DQS_14 |
+| L25 | `MRAM_SO` | IO_L9N_T1_DQS_D13_14 |
+
+## microSD — SPI mode, bank 14
+
+| Ball | Net | Package name |
+|---|---|---|
+| L22 | `SD_CS` | IO_L11P_T1_SRCC_14 |
+| L23 | `SD_SCK` | IO_L11N_T1_SRCC_14 |
+| R22 | `SD_MISO` | IO_L23N_T3_A02_D18_14 |
+| T22 | `SD_MOSI` | IO_L23P_T3_A03_D19_14 |
+| T23 | `SD_CD` | IO_L24P_T3_A01_D17_14 |
+
+SD_CD is the socket's detect switch, read with the FPGA's pull-up.
 
 ## Supervisor sideband
 
 | Ball | Net |
 |---|---|
-| P23 | `DBG_TCK` |
-| P24 | `DBG_TMS` |
-| R20 | `DBG_TDI` |
-| R21 | `DBG_TDO` |
-| R25 | `SB_UART_RX` |
-| P25 | `SB_UART_TX` |
+| N21 | `DBG_TCK` |
+| N22 | `DBG_TMS` |
+| M20 | `DBG_TDI` |
+| L20 | `DBG_TDO` |
+| P20 | `SB_UART_RX` |
+| P21 | `SB_UART_TX` |
 
 ## Extension slots
 
@@ -88,8 +175,8 @@ an optional capability rather than part of the basic connector UX.
 
 | Slot | Bank | FPGA balls in connector order |
 |---|---|---|
-| **L** | 14 | N26, M26, T24, T25, R26, P26, T22, R22 |
-| **M** | 13 | U25, U26, V26, W26, AB26, AC26, W25, Y26 |
+| **L** | 13 | V26, W26, AB26, AC26, U25, U26, W25, Y26 |
+| **M** | 13 | Y25, AA25, V24, W24, AA24, AB25, AB24, AC24 |
 | **A** | 15 | K15, J16, J14, J15, K16, K17, M14, L14, M15, L15, M16, M17 |
 | **B** | 15 | J19, H19, L17, L18, K20, J20, J18, H18, G20, G21, K21, J21 |
 | **C** | 15 | H21, H22, J23, H23, G22, F22, J24, H24, F23, E23, K22, K23 |
@@ -99,12 +186,12 @@ an optional capability rather than part of the basic connector UX.
 | **G** | 34 | R3, P3, P4, N4, R1, P1, T4, T3, T2, R2, U2, U1 |
 | **H** | 34 | P6, P5, T5, R5, U6, U5, R8, P8, R7, R6, T8, T7 |
 
-The two 5V buses are buffered; A-H are direct. M19, U24 are their direction controls. Together the buses cost **20** FPGA I/O for 16 connector signals.
+The two 5V buses are buffered; A-H are direct. U17, U24 are their direction controls. Together the buses cost **20** FPGA I/O for 16 connector signals.
 
 | Bus control | FPGA ball | Bank | Default |
 |---|---|---|---|
-| `BUS5V0_OE_N` | P16 | 14 | 10k to +3V3; high disables the bus |
-| `BUS5V1_OE_N` | Y25 | 13 | 10k to +3V3; high disables the bus |
+| `BUS5V0_OE_N` | V23 | 14 | 10k to +3V3; high disables the bus |
+| `BUS5V1_OE_N` | W23 | 13 | 10k to +3V3; high disables the bus |
 
 Hold OE_N high while setting DIR and data; drive OE_N low only when ready.
 Raise OE_N again before changing direction.
@@ -137,11 +224,76 @@ Raise OE_N again before changing direction.
 | Y14 | `VCCO_0` |
 | Y9 | `M1_0` |
 
-## Bank 216 — two connected GTP transceivers
+## Network: bank 16 at 2.5 V
 
-Lanes 0 and 1 go to the two SFP ports. Lanes 2 and 3 have RX grounded
-and TX floating; unused reference-clock inputs float (UG482 Table 5-6).
-See `ref/highspeed.md`.
+RGMII and MDIO to the RTL8211FD-CG (DVDD_RG = +2V5). `PHY_RXC` is the
+PHY's 125 MHz receive clock on an MRCC ball; the two link receive clocks
+sit on clock-capable pairs (MRCC for P, SRCC for Q). See `ref/network.md`
+and `ref/link-ports.md`.
+
+| Ball | Net | Package name |
+|---|---|---|
+| C17 | `PHY_MDC` | IO_L7P_T1_16 |
+| B17 | `PHY_MDIO` | IO_L7N_T1_16 |
+| D19 | `PHY_RXC` | IO_L13P_T2_MRCC_16 |
+| C19 | `PHY_RXD0` | IO_L13N_T2_MRCC_16 |
+| H17 | `PHY_RXD1` | IO_0_16 |
+| E22 | `PHY_RXD2` | IO_25_16 |
+| B19 | `PHY_RXD3` | IO_L10P_T1_16 |
+| A19 | `PHY_RX_CTL` | IO_L10N_T1_16 |
+| C24 | `PHY_TXC` | IO_L23P_T3_16 |
+| B24 | `PHY_TXD0` | IO_L23N_T3_16 |
+| C22 | `PHY_TXD1` | IO_L19P_T3_16 |
+| C23 | `PHY_TXD2` | IO_L19N_T3_VREF_16 |
+| C21 | `PHY_TXD3` | IO_L16P_T2_16 |
+| B21 | `PHY_TX_CTL` | IO_L16N_T2_16 |
+
+| Port | Pair | P | N | Package name |
+|---|---|---|---|---|
+| LINK P | RXC | D18 | C18 | IO_L12P_T1_MRCC_16 |
+| LINK P | TXC | C26 | B26 | IO_L22P_T3_16 |
+| LINK P | TXD | A23 | A24 | IO_L21P_T3_DQS_16 |
+| LINK P | RXD | A17 | A18 | IO_L9P_T1_DQS_16 |
+| LINK Q | RXC | E20 | D20 | IO_L14P_T2_SRCC_16 |
+| LINK Q | TXC | B25 | A25 | IO_L20P_T3_16 |
+| LINK Q | TXD | B22 | A22 | IO_L17P_T2_16 |
+| LINK Q | RXD | B20 | A20 | IO_L15P_T2_DQS_16 |
+
+The two 3.3 V PHY pins are in bank 13:
+
+| Ball | Net | Package name |
+|---|---|---|
+| G1 | `PHY_RESET_N` | IO_L24N_T3_35 |
+| G2 | `PHY_INT_N` | IO_L24P_T3_35 |
+
+## Video: bank 35 at 3.3 V
+
+HDMI out. The four lanes are TMDS_33 pairs, terminated by the monitor's
+50 ohm pull-ups to 3.3 V; the six control lines go to U31 (TPD12S016),
+which shifts DDC and CEC to the cable's 5 V. All fourteen balls sit in
+the package's two outer rows.
+
+| Pair | P | N | Package name |
+|---|---|---|---|
+| CLK | A3 | A2 | IO_L20P_T3_35 |
+| D0 | C1 | B1 | IO_L21P_T3_DQS_35 |
+| D1 | E1 | D1 | IO_L23P_T3_35 |
+| D2 | B5 | A5 | IO_L15P_T2_DQS_35 |
+
+| Ball | Net | Package name |
+|---|---|---|
+| B2 | `HDMI_CEC` | IO_L19N_T3_VREF_35 |
+| F2 | `HDMI_CT_HPD` | IO_L22P_T3_35 |
+| B4 | `HDMI_HPD` | IO_L16P_T2_35 |
+| E2 | `HDMI_LS_OE` | IO_L22N_T3_35 |
+| A4 | `HDMI_SCL` | IO_L16N_T2_35 |
+| C2 | `HDMI_SDA` | IO_L19P_T3_35 |
+
+## GTP banks 213 and 216 — unused, powered
+
+Rev A has no transceiver load. Both quads keep MGTAVCC/MGTAVTT powered,
+all RX pins to GND, TX and reference-clock pins floating, and one 100 ohm
+1% RCAL each to +1V2_MGT (UG482 Tables 5-5/5-6).
 
 | Ball | Name |
 |---|---|
@@ -166,21 +318,39 @@ See `ref/highspeed.md`.
 | E13 | `MGTREFCLK1N_216` |
 | F11 | `MGTREFCLK0P_216` |
 | F13 | `MGTREFCLK1P_216` |
-
-## Bank 213 — unused GTP transceivers
-
-The G10 supplies remain powered. All eight RX pins connect to GND;
-MGTRREF_213 connects through its own 100 ohm, 1% resistor to +1V2_MGT.
-TX and reference-clock pins float, per UG482 Table 5-5.
+| AA11 | `MGTREFCLK1P_213` |
+| AA13 | `MGTREFCLK0P_213` |
+| AB11 | `MGTREFCLK1N_213` |
+| AB13 | `MGTREFCLK0N_213` |
+| AC10 | `MGTPTXP0_213` |
+| AC12 | `MGTPRXP0_213` |
+| AC14 | `MGTPRXP2_213` |
+| AC8 | `MGTPTXP2_213` |
+| AD10 | `MGTPTXN0_213` |
+| AD12 | `MGTPRXN0_213` |
+| AD14 | `MGTPRXN2_213` |
+| AD8 | `MGTPTXN2_213` |
+| AE11 | `MGTPRXP3_213` |
+| AE13 | `MGTPRXP1_213` |
+| AE7 | `MGTPTXP3_213` |
+| AE9 | `MGTPTXP1_213` |
+| AF11 | `MGTPRXN3_213` |
+| AF13 | `MGTPRXN1_213` |
+| AF15 | `MGTRREF_213` |
+| AF7 | `MGTPTXN3_213` |
+| AF9 | `MGTPTXN1_213` |
 
 ## Budget
 
 - slots: **96**
 - PSRAM: **24**
+- SDRAM: **39**
+- MRAM: **4**
+- microSD: **5**
 - supervisor sideband: **6**
 - config flash + strap: **6**
 - 5V bus data: **16**
 - 5V bus direction: **2**
 - 5V bus enable: **2**
-- **assigned HR I/O: 152 of 300**
-- **free: 148** for base-board peripherals
+- **assigned HR I/O: 247 of 300**
+- **free: 53** for base-board peripherals

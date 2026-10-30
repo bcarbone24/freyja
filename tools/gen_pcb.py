@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Emit an empty 6-layer kicad_pcb with outline + stackup + net classes.
-Populate it in the PCB editor with Update PCB from Schematic (F8)."""
+"""Board stackup, net classes and design rules for kicad/odin.kicad_pcb.
+
+    python3 tools/gen_pcb.py --rules-only   # the only form to use on the live board
+
+8 layers, JLC08161H-1080A (ref/jlc08161h-1080a-stackup.json): S-G-S-P-G-S-G-S.
+Without --rules-only it emits an empty board, which destroys placement."""
 import argparse
 import json
 from pathlib import Path
@@ -10,12 +14,27 @@ W, H, R = 100.0, 100.0, 3.0        # board size and corner radius
 X0, Y0 = 30.0, 30.0
 OUT = 'kicad/odin.kicad_pcb'
 
-# JLC06161H-1080B, coated outer microstrip L1/L2 or L6/L5, 100 ohm.
-# JLC solver: W1=3.8828125 mil at S1=0.200 mm; round width to 0.099 mm.
-# Inputs, calculation response, material table: ref/pcb-impedance.md.
-MGT_WIDTH = 0.099
-MGT_GAP = 0.200
-MGT_PATTERNS = ('MGTP*', 'MGTREFCLK*', 'SFP?_TD_*', 'SFP?_RD_*', 'REFCLK_OSC_*')
+# JLC08161H-1080A keeps the JLC06161H-1080B outer prepreg (1080, 0.0764 mm,
+# Dk 3.91), so the saved coated-microstrip solver result for 100 ohm on
+# L1/L2 and L8/L7 still holds: W1 = 3.8828 mil at S1 = 0.200 mm, rounded to
+# 0.099 mm. Inputs and response: ref/pcb-impedance.md.
+DIFF_WIDTH = 0.099
+DIFF_GAP = 0.200
+# 50 ohm single-ended on the same outer prepreg: Hammerstad-Jensen with the
+# 1.6 mil finished copper gives 50.6 ohm at 0.13 mm bare; solder mask takes
+# a few ohm off, so 0.125 mm. Estimate, to be confirmed with JLC's
+# calculator at order time (ref/pcb-impedance.md).
+RGMII_WIDTH = 0.125
+# The HDMI TMDS_33 pairs are 100 ohm differential too and share the class's
+# outer-layer geometry and rules (HDMI 1.4: 100 ohm +/-15 %).
+LVDS_PATTERNS = ('LINK_*', 'HDMI_CLK_*', 'HDMI_D0_*', 'HDMI_D1_*', 'HDMI_D2_*')
+MDI_PATTERNS = ('ETH_MDI*',)
+RGMII_PATTERNS = ('PHY_TXC', 'PHY_TXD?', 'PHY_TX_CTL', 'PHY_RXC', 'PHY_RXD?', 'PHY_RX_CTL')
+# The SDR SDRAM bus (W9825G6KH-6, up to 166 MHz, 3.3 V single-ended) wants
+# the same outer-layer 50 ohm geometry as RGMII; CLK has its 22 ohm at the
+# FPGA and the data/control lines are length-matched by hand to it.
+SDRAM_PATTERNS = ('SDRAM_*',)
+GENERATED = ('MGT_100R', 'LVDS_100R', 'MDI_100R', 'RGMII', 'SDRAM', 'PSRAM', 'AUX_5A')
 
 
 def emit_rules():
@@ -25,18 +44,26 @@ def emit_rules():
     settings = project['net_settings']
     default = next(c for c in settings['classes'] if c['name'] == 'Default')
     default.update(clearance=0.15, via_diameter=0.45, via_drill=0.2)
-    settings['classes'] = [c for c in settings['classes']
-                           if c['name'] not in ('MGT_100R', 'PSRAM')]
+    settings['classes'] = [c for c in settings['classes'] if c['name'] not in GENERATED]
+    diff = dict(default, track_width=DIFF_WIDTH, diff_pair_width=DIFF_WIDTH,
+                diff_pair_gap=DIFF_GAP)
     settings['classes'] += [
-        dict(default, name='MGT_100R', priority=0, track_width=MGT_WIDTH,
-             diff_pair_width=MGT_WIDTH, diff_pair_gap=MGT_GAP),
+        dict(diff, name='LVDS_100R', priority=0),
+        dict(diff, name='MDI_100R', priority=0),
+        dict(default, name='RGMII', priority=1, track_width=RGMII_WIDTH),
+        dict(default, name='SDRAM', priority=1, track_width=RGMII_WIDTH),
         dict(default, name='PSRAM', priority=1, track_width=0.1),
+        dict(default, name='AUX_5A', priority=2, track_width=2.0,
+             via_diameter=1.0, via_drill=0.5),
     ]
     settings['netclass_patterns'] = [p for p in settings['netclass_patterns']
-                                    if p['netclass'] not in ('MGT_100R', 'PSRAM')]
-    settings['netclass_patterns'] += [dict(netclass='MGT_100R', pattern=p)
-                                      for p in MGT_PATTERNS]
+                                    if p['netclass'] not in GENERATED]
+    settings['netclass_patterns'] += [dict(netclass='LVDS_100R', pattern=p) for p in LVDS_PATTERNS]
+    settings['netclass_patterns'] += [dict(netclass='MDI_100R', pattern=p) for p in MDI_PATTERNS]
+    settings['netclass_patterns'] += [dict(netclass='RGMII', pattern=p) for p in RGMII_PATTERNS]
+    settings['netclass_patterns'] += [dict(netclass='SDRAM', pattern=p) for p in SDRAM_PATTERNS]
     settings['netclass_patterns'].append(dict(netclass='PSRAM', pattern='PSRAM*'))
+    settings['netclass_patterns'].append(dict(netclass='AUX_5A', pattern='AUX_RAIL'))
     project['board']['design_settings']['rules'].update(
         min_clearance=0.15, min_track_width=0.0889,
         min_via_diameter=0.45, min_through_hole_diameter=0.2)
@@ -48,22 +75,39 @@ def emit_rules():
 (rule "PSRAM minimum width"
   (condition "A.hasNetclass('PSRAM')")
   (constraint track_width (min 0.1mm) (opt 0.1mm)))
-(rule "MGT 100R outer geometry"
+(rule "AUX_RAIL 5A aggregate"
+  (condition "A.hasNetclass('AUX_5A')")
+  (constraint track_width (min 2.0mm) (opt 2.0mm)))
+# RGMII: about 50 ohm on the outer layers; keep the twelve lines the same
+# width and length-match TXD[3:0]/TX_CTL to TXC and RXD[3:0]/RX_CTL to RXC
+# by hand (KiCad has no bus-skew rule); the PHY's 2 ns delays do the rest.
+(rule "RGMII width"
+  (condition "A.hasNetclass('RGMII')")
+  (constraint track_width (min {RGMII_WIDTH}mm) (opt {RGMII_WIDTH}mm)))
+# SDRAM: the same 50 ohm outer-layer width; length-match DQ, DQM, address
+# and control to SDRAM_CLK by hand (within a few mm at 166 MHz).
+(rule "SDRAM width"
+  (condition "A.hasNetclass('SDRAM')")
+  (constraint track_width (min {RGMII_WIDTH}mm) (opt {RGMII_WIDTH}mm)))
+# 100 ohm differential pairs: the LVDS_25 link pairs and the PHY's MDI pairs.
+# Geometry is calculated only for L1 over In1 and B.Cu over In6.
+(rule "100R outer geometry"
   (layer outer)
-  (condition "A.hasNetclass('MGT_100R')")
-  (constraint track_width (min {MGT_WIDTH}mm) (opt {MGT_WIDTH}mm) (max {MGT_WIDTH}mm))
-  (constraint diff_pair_gap (min {MGT_GAP}mm) (opt {MGT_GAP}mm) (max {MGT_GAP}mm)))
-# This geometry is calculated only for L1/L2 and L6/L5, not inner layers.
-(rule "MGT outer routing only"
+  (condition "A.hasNetclass('LVDS_100R') || A.hasNetclass('MDI_100R')")
+  (constraint track_width (min {DIFF_WIDTH}mm) (opt {DIFF_WIDTH}mm) (max {DIFF_WIDTH}mm))
+  (constraint diff_pair_gap (min {DIFF_GAP}mm) (opt {DIFF_GAP}mm) (max {DIFF_GAP}mm)))
+(rule "100R outer routing only"
   (layer inner)
-  (condition "A.hasNetclass('MGT_100R')")
+  (condition "A.hasNetclass('LVDS_100R') || A.hasNetclass('MDI_100R')")
   (constraint disallow track))
-# Keep other copper >= ~4 dielectric heights away for the non-coplanar model.
-(rule "MGT clearance to other copper"
-  (condition "A.hasNetclass('MGT_100R') && !AB.isCoupledDiffPair()")
+# Keep other copper >= ~4 dielectric heights away from the pair tracks for
+# the non-coplanar model. Tracks only: the 0.4 mm QFN pads and the jack pins
+# set their own spacing.
+(rule "100R clearance to other copper"
+  (condition "A.Type == 'Track' && (A.hasNetclass('LVDS_100R') || A.hasNetclass('MDI_100R')) && !AB.isCoupledDiffPair()")
   (constraint clearance (min 0.31mm)))
-(rule "MGT intra-pair skew"
-  (condition "A.hasNetclass('MGT_100R')")
+(rule "100R intra-pair skew"
+  (condition "A.hasNetclass('LVDS_100R') || A.hasNetclass('MDI_100R')")
   (constraint skew (max 0.1mm) (within_diff_pairs)))
 '''
     Path(OUT).with_suffix('.kicad_dru').write_text(rules)
@@ -74,7 +118,11 @@ def sexpr_block(text, marker):
     """Locate one balanced block, ignoring parentheses in quoted strings."""
     start = text.index(marker)
     depth, quoted, escaped = 0, False, False
-    for i in range(start, len(text)):
+    # scan from the block's own '(' : a marker may begin with whitespace
+    # ('\n\t(layers'), and a scan from there ends at once at depth 0, which
+    # made update_stackup insert the 8-layer list in front of the old one
+    # instead of replacing it (KiCad reads the last list: 6 layers)
+    for i in range(text.index('(', start), len(text)):
         c = text[i]
         if escaped:
             escaped = False
@@ -95,21 +143,34 @@ def update_stackup():
     board = path.read_text()
     start, end = sexpr_block(board, '(stackup')
     a, b = sexpr_block(SETUP, '(stackup')
-    path.write_text(board[:start] + SETUP[a:b] + board[end:])
-    print(f'updated {path}: JLC06161H-1080B stackup; placement preserved')
+    board = board[:start] + SETUP[a:b] + board[end:]
+    # The copper layer list goes with the stackup. Nothing is routed yet, so
+    # adding inner layers touches no track or zone.
+    start, end = sexpr_block(board, '\n\t(layers')
+    board = board[:start] + '\n' + layers_block() + board[end:]
+    path.write_text(board)
+    print(f'updated {path}: JLC08161H-1080A 8-layer stackup and layer list; placement preserved')
 
-LAYERS = [(0,'F.Cu','signal'), (1,'In1.Cu','signal','GND plane'),
-          (2,'In2.Cu','signal'), (3,'In3.Cu','signal','power planes'),
-          (4,'In4.Cu','signal','GND plane'), (31,'B.Cu','signal'),
-          (32,'B.Adhes','user','B.Adhesive'), (33,'F.Adhes','user','F.Adhesive'),
-          (34,'B.Paste','user'), (35,'F.Paste','user'),
-          (36,'B.SilkS','user','B.Silkscreen'), (37,'F.SilkS','user','F.Silkscreen'),
-          (38,'B.Mask','user'), (39,'F.Mask','user'),
-          (40,'Dwgs.User','user','User.Drawings'), (41,'Cmts.User','user','User.Comments'),
-          (42,'Eco1.User','user','User.Eco1'), (43,'Eco2.User','user','User.Eco2'),
-          (44,'Edge.Cuts','user'), (45,'Margin','user'),
-          (46,'B.CrtYd','user','B.Courtyard'), (47,'F.CrtYd','user','F.Courtyard'),
-          (48,'B.Fab','user'), (49,'F.Fab','user')]
+LAYERS = [(0,'F.Cu','signal'), (4,'In1.Cu','signal','GND plane'),
+          (6,'In2.Cu','signal'), (8,'In3.Cu','signal','power planes'),
+          (10,'In4.Cu','signal','GND plane'), (12,'In5.Cu','signal'),
+          (14,'In6.Cu','signal','GND plane'), (2,'B.Cu','signal'),
+          (9,'F.Adhes','user','F.Adhesive'), (11,'B.Adhes','user','B.Adhesive'),
+          (13,'F.Paste','user'), (15,'B.Paste','user'),
+          (5,'F.SilkS','user','F.Silkscreen'), (7,'B.SilkS','user','B.Silkscreen'),
+          (1,'F.Mask','user'), (3,'B.Mask','user'),
+          (17,'Dwgs.User','user','User.Drawings'), (19,'Cmts.User','user','User.Comments'),
+          (21,'Eco1.User','user','User.Eco1'), (23,'Eco2.User','user','User.Eco2'),
+          (25,'Edge.Cuts','user'), (27,'Margin','user'),
+          (31,'F.CrtYd','user','F.Courtyard'), (29,'B.CrtYd','user','B.Courtyard'),
+          (35,'F.Fab','user'), (33,'B.Fab','user')]
+
+def layers_block():
+    o = ['\t(layers']
+    for l in LAYERS:
+        o.append(f'\t\t({l[0]} "{l[1]}" {l[2]}' + (f' "{l[3]}"' if len(l) > 3 else '') + ')')
+    o.append('\t)')
+    return '\n'.join(o)
 
 SETUP = '''\t(setup
 \t\t(pad_to_mask_clearance 0)
@@ -124,13 +185,19 @@ SETUP = '''\t(setup
 \t\t\t(layer "In1.Cu" (type "copper") (thickness 0.0152))
 \t\t\t(layer "dielectric 2" (type "core") (thickness 0.1) (material "NP-155F core") (epsilon_r 4.36) (loss_tangent 0.02))
 \t\t\t(layer "In2.Cu" (type "copper") (thickness 0.0152))
-\t\t\t(layer "dielectric 3" (type "core") (thickness 0.2104) (material "NP-155F 7628 RC49%") (epsilon_r 4.4) (loss_tangent 0.02)
-                (addsublayer) (thickness 0.7) (material "NP-155F core") (epsilon_r 4.53) (loss_tangent 0.02)
+\t\t\t(layer "dielectric 3" (type "prepreg") (thickness 0.2104) (material "NP-155F 7628 RC49%") (epsilon_r 4.4) (loss_tangent 0.02)
+                (addsublayer) (thickness 0.084) (material "NP-155F 1080 RC67%") (epsilon_r 3.91) (loss_tangent 0.02)
                 (addsublayer) (thickness 0.2104) (material "NP-155F 7628 RC49%") (epsilon_r 4.4) (loss_tangent 0.02))
 \t\t\t(layer "In3.Cu" (type "copper") (thickness 0.0152))
 \t\t\t(layer "dielectric 4" (type "core") (thickness 0.1) (material "NP-155F core") (epsilon_r 4.36) (loss_tangent 0.02))
 \t\t\t(layer "In4.Cu" (type "copper") (thickness 0.0152))
-\t\t\t(layer "dielectric 5" (type "prepreg") (thickness 0.0764) (material "NP-155F 1080 RC67%") (epsilon_r 3.91) (loss_tangent 0.02))
+\t\t\t(layer "dielectric 5" (type "prepreg") (thickness 0.2104) (material "NP-155F 7628 RC49%") (epsilon_r 4.4) (loss_tangent 0.02)
+                (addsublayer) (thickness 0.084) (material "NP-155F 1080 RC67%") (epsilon_r 3.91) (loss_tangent 0.02)
+                (addsublayer) (thickness 0.2104) (material "NP-155F 7628 RC49%") (epsilon_r 4.4) (loss_tangent 0.02))
+\t\t\t(layer "In5.Cu" (type "copper") (thickness 0.0152))
+\t\t\t(layer "dielectric 6" (type "core") (thickness 0.1) (material "NP-155F core") (epsilon_r 4.36) (loss_tangent 0.02))
+\t\t\t(layer "In6.Cu" (type "copper") (thickness 0.0152))
+\t\t\t(layer "dielectric 7" (type "prepreg") (thickness 0.0764) (material "NP-155F 1080 RC67%") (epsilon_r 3.91) (loss_tangent 0.02))
 \t\t\t(layer "B.Cu" (type "copper") (thickness 0.035))
 \t\t\t(layer "B.Mask" (type "Bottom Solder Mask") (thickness 0.0254) (epsilon_r 3.8))
 \t\t\t(layer "B.Paste" (type "Bottom Solder Paste"))
@@ -158,13 +225,9 @@ def emit_board():
     o = ['(kicad_pcb', '\t(version 20241229)', '\t(generator "odin-tools")',
          '\t(generator_version "9.0")',
          '\t(general\n\t\t(thickness 1.6)\n\t\t(legacy_teardrops no)\n\t)',
-         '\t(paper "A3")', '\t(layers']
-    for l in LAYERS:
-        o.append(f'\t\t({l[0]} "{l[1]}" {l[2]}' + (f' "{l[3]}"' if len(l) > 3 else '') + ')')
-    o.append('\t)')
-    # Sig / GND / Sig / PWR / GND / Sig, nominal 1.6 mm ENIG.
-    # JLC06161H-1080B: https://jlcpcb.com/impedance
-    # Material parameters and solver evidence: ref/pcb-impedance.md.
+         '\t(paper "A3")', layers_block()]
+    # S / GND / S / PWR / GND / S / GND / S, nominal 1.6 mm ENIG.
+    # JLC08161H-1080A: ref/jlc08161h-1080a-stackup.json, ref/pcb-impedance.md.
     o.append(SETUP)
     o.append('\t(net 0 "")')
     # rounded rectangular outline
@@ -183,12 +246,12 @@ def emit_board():
           arc(x1, y1+R, x1+k, y1+k, x1+R, y1)]
     for tx, ty, txt, sz, layer in (
             (x1+4, y1+5, f'{PRODUCT} HW {HW_VERSION}', 2.0, 'F.SilkS'),
-            (x1+4, y1+10, f'{FPGA_PART} + {CONTROLLER_PART}  |  6 layer', 1.5, 'F.Fab')):
+            (x1+4, y1+10, f'{FPGA_PART} + {CONTROLLER_PART}  |  8 layer', 1.5, 'F.Fab')):
         o.append(f'\t(gr_text "{txt}" (at {tx} {ty}) (layer "{layer}") '
                  f'(effects (font (size {sz} {sz}) (thickness {sz/6:.2f})) (justify left)))')
     o.append(')')
     open(OUT, 'w').write('\n'.join(o) + '\n')
-    print(f"wrote {OUT}: {W}x{H}mm, 6 layers, ENIG")
+    print(f"wrote {OUT}: {W}x{H}mm, 8 layers, ENIG")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
