@@ -3,8 +3,10 @@
 Odin is an FPGA board for building the thing you meant to build.
 
 One USB-C cable powers it and programs it. Four PSRAM chips give the FPGA
-8 MB of working memory. Ten extension ports carry signals and useful power.
-Two SFP sockets carry the links that ordinary FPGA pins cannot.
+32 MB of working memory on four private ports, and a 32 MB SDRAM sits beside
+them. Ten extension ports carry signals and useful power.
+A gigabit Ethernet jack and two raw link ports sit on the bottom edge,
+opposite the two extension bus headers.
 
 This manual is for using the board. If you are designing an extension, read
 `ref/extension-ux.md` after this.
@@ -21,13 +23,16 @@ This manual is for using the board. If you are designing an extension, read
                     +----------------v----------------+
                     | XC7A100T FPGA                   |
                     |                                |
-       8 MB PSRAM <---> four separate memory links   |
+      32 MB PSRAM <---> four separate memory links   |
+      32 MB SDRAM <---> one 16-bit bus                |
+     microSD, MRAM <---> SPI                          |
                     |                                |
       slots A-D  <----> 48 direct pins, one voltage  |
       slots E-H  <----> 48 direct pins, one voltage  |
       5V BUS 0/1 <----> two complete 8-bit buses     |
                     |                                |
-      SFP 0 and 1 <----> fast serial lanes           |
+      ETH         <----> 1000Base-T PHY, RGMII     |
+      LINK P / Q  <----> raw LVDS pairs, board to board |
                     +--------------------------------+
 ```
 
@@ -35,29 +40,41 @@ This manual is for using the board. If you are designing an extension, read
 
 1. Leave all extensions unplugged.
 2. Set both **A–D PIN VOLTAGE** and **E–H PIN VOLTAGE** to **3.3 V**.
-3. Set each **SLOT _ POWER** selector to **3.3 V**, or leave its jumper off.
+3. Leave **AUX IN** unconnected.
 4. Plug USB-C into Odin.
 5. Wait for the board controller to start.
 6. Plug in one simple extension and test it before adding the next.
 
-Use a USB-PD charger when the board carries displays, speakers, motors or SFP
-modules. A computer port is fine for programming and light work, but it may
+Use a USB-PD charger when the board carries displays, speakers or motors. A computer port is fine for programming and light work, but it may
 not have enough power for everything at once.
 
-Odin never asks USB-C for more than 9 V.
+Odin asks USB-C for 5 V by default and for 9 V only once the board controller
+is running and has decided to; its pins cannot form any higher request.
+While it asks, the board's 5 V runs a little low for under a second;
+extension power stays off until the request is settled. A 9 V charger is
+good for at least 15 W. A computer port is treated as 500 mA unless you
+tell the board controller otherwise: it cannot measure what a 5 V port
+offers.
 
 ### Optional power input
 
 `OPTIONAL POWER IN` is not required for normal use. It is a second way to
 power Odin from a regulated bench supply when USB-C cannot provide enough
-power. Connect **9–14 V** to the pin marked `+` and supply ground to `GND`.
-USB-C may remain connected; Odin uses the higher source. Never exceed 14 V.
+power. Connect **9–21 V** to the pin marked `+` and supply ground to `GND`.
+USB-C may remain connected; while the optional input is powered, Odin runs
+from it and uses USB only to talk to the computer. Never exceed 21 V.
+Full extension power (every connector rail loaded at once) needs this
+input; a 9 V USB-PD charger carries the board and part of the extensions.
+See [power-budget.md](power-budget.md).
 
 ## The extension idea, from zero
 
-Odin has eight shield sections arranged on opposite sides of the 100 x 100 mm
-board. Each section has a 16-position signal block and a separate 8-pin power
-row. Two additional ports are complete 5 V-compatible eight-bit buses.
+Odin has eight shield sections on the left and right edges of the 100 x 100 mm
+board (A–D on the left, E–H on the right). Each section has a 16-position
+signal block and a separate keyed power row: a grounded post at position 1
+and a seven-contact socket. Two additional ports are complete 5 V-compatible
+eight-bit buses. The authoritative pin map is
+[extension-ux.md](extension-ux.md); the tables below repeat it.
 
 ```text
 one direct slot
@@ -71,8 +88,9 @@ power | o o o o o o o o |
        24 pins total
 ```
 
-Twelve pins are signals. Four grounds complete the signal block. Power gets
-its own unmistakable row with four supplies and four grounds.
+Twelve pins are signals. Four grounds complete the signal block, in columns
+3 and 6 of both rows. Power gets its own unmistakable row: a key post, then
+PIN V, 3V3, 5V and AUX, each beside a ground.
 
 ### Where are the I/Os?
 
@@ -80,9 +98,9 @@ Here. `IO` means a signal you can use as an input or an output.
 
 ```text
               1     2     3     4     5     6     7     8
-signal row 1  IO0   IO2   IO4   IO6   IO8   IO10  GND   GND
-signal row 2  IO1   IO3   IO5   IO7   IO9   IO11  GND   GND
-power row     GND   PIN V GND   3V3   GND   5V    GND   SLOT PWR
+signal row 1  IO0   IO2   GND   IO4   IO6   GND   IO8   IO10
+signal row 2  IO1   IO3   GND   IO5   IO7   GND   IO9   IO11
+power row     POST  PIN V GND   3V3   GND   5V    GND   AUX
 ```
 
 Use `IO0..IO11` as ordinary independent signals. Some adjacent pins can also
@@ -113,10 +131,10 @@ complete FPGA banks and gets 96 direct I/O.
 
 The schematic names four 16-pin sections on each edge. Those are electrical
 zones, not a demand for four separate plastic connectors. Odin uses the
-physical arrangement: **two continuous 2x16 stack-through signal headers and
-two parallel 1x16 stack-through power headers on each edge**. A 16 shield uses
-half of one pair, a 32 uses one whole pair, and a 64 uses both. The guide pins
-and outlines must make those partial positions unambiguous.
+physical arrangement: **one continuous 2x32 female signal body per edge, and
+per zone one 1x7 female power socket with a grounded key post in front of
+it**. A 16 shield uses one zone on each edge, a 32 two, and a 64 all four. The
+key posts and outlines must make those partial positions unambiguous.
 
 The bridge gives the extension support at both ends, almost the full board
 area above Odin, and matching connectors on top so another shield can stack.
@@ -128,21 +146,20 @@ switch.
 The required arrangement is:
 
 ```text
-                    100 mm
-       +----------------------------------+
-       | [ A ][ B ][ C ][ D ]            |  bank 15
-       |                                  |
-       |             ODIN                 |  shield bridges
-       |                                  |  across this space
-       | [ E ][ F ][ G ][ H ]            |  bank 34
-       +----------------------------------+
-
-       [ L ]  separate 5 V-safe legacy connector
+                       100 mm
+          +----------------------------+
+      A   |  [ L ]            [ M ]    |   E        top: the two 5 V buses
+      B   |                            |   F
+          |           ODIN             |            left: A-D (bank 15)
+      C   |                            |   G        right: E-H (bank 34)
+      D   |                            |   H
+          +----------------------------+
 ```
 
-Matching pairs are A/E, B/F, C/G and D/H. Placement must put each pair directly
-opposite its partner. All eight connectors need the same pitch, orientation
-and distance from the board edges.
+Matching pairs are A/E, B/F, C/G and D/H, directly opposite each other across
+the board on one 2.54 mm lattice. All eight zones have the same pitch,
+orientation and distance from the board edge; `tools/place.py --check`
+verifies that from the real pad coordinates.
 
 **Their exact coordinates do not exist yet because placement has not been
 done.** Until those coordinates and a real extension outline are drawn and
@@ -192,9 +209,9 @@ but blocks the next board is not a working guide.
 
 ```text
              column  1     2     3     4     5     6     7     8
- signal row 1        IO0   IO2   IO4   IO6   IO8   IO10  GND   GND
- signal row 2        IO1   IO3   IO5   IO7   IO9   IO11  GND   GND
- power row           GND   PIN V GND   3V3   GND   5V    GND   SLOT PWR
+ signal row 1        IO0   IO2   GND   IO4   IO6   GND   IO8   IO10
+ signal row 2        IO1   IO3   GND   IO5   IO7   GND   IO9   IO11
+ power row           POST  PIN V GND   3V3   GND   5V    GND   AUX
 ```
 
 The separate post beside the header is the **guide pin**. The extension has a
@@ -210,7 +227,7 @@ Never shift the extension sideways by one column. Check the guide pin before pow
 | `PIN V` | The signal voltage for that FPGA group: 3.3, 2.5 or 1.8 V |
 | `+5V` | Fixed supply for 5 V parts |
 | `+3V3` | Fixed supply for ordinary 3.3 V parts |
-| `SEL PWR` | Selected beside that slot: 12 V, 5 V or 3.3 V |
+| `AUX` | Whatever you wire to **AUX IN** (9–28 V, unregulated), through that slot's own fuse. Nothing when AUX IN is empty |
 
 `PIN V` is both a power output and the voltage used by the FPGA pins. The
 schematic calls it `VCCIO`; the board says PIN VOLTAGE because that says what
@@ -334,15 +351,15 @@ Use:
 PIN V   3.3 V   FPGA signal level
 +3V3            display, SD card and audio logic
 +5V             audio amplifier
-SEL PWR 12 V    backlight driver, if required
+AUX 12 V        backlight driver, if required (12 V wired to AUX IN)
 ```
 
 The framebuffer belongs in PSRAM. A 320 x 240 RGB565 frame is about 150 KB;
-the board has 8 MB.
+the board has 32 MB of PSRAM and another 32 MB of SDRAM.
 
 ## Memory without ceremony
 
-Odin has four 2 MB PSRAM chips. Each has its own connection to the FPGA.
+Odin has four 8 MB PSRAM chips. Each has its own connection to the FPGA.
 
 ```text
 PSRAM 0  video or DMA
@@ -429,33 +446,24 @@ Fit **EXT JTAG** (`J52`) before attaching an external programmer.
 That disconnects the board controller from the same four wires. Remove the
 jumper for normal board-controlled programming.
 
-## Fast links
+The FPGA loads itself from its flash (master SPI) at power-on. The board
+controller writes that flash while it holds the FPGA in reset, and loads a
+design directly into the FPGA over the same JTAG wires. There is no
+slave-serial path: the mode pins are fixed in copper.
 
-Two SFP sockets are fitted by default. They can accept suitable copper,
-fibre or direct-attach modules.
+## Network and link ports
 
-```text
-SFP 0 -> FPGA fast lane 0
-SFP 1 -> FPGA fast lane 1
-```
+**ETH** is a 1000Base-T jack behind an RTL8211FD-CG PHY on RGMII. The FPGA
+design still needs a MAC (and a stack): the PHY gives you a link, not an
+Ethernet controller. Green is link/activity, yellow is a 1000 Mb/s link.
 
-The FPGA provides the physical serial lane. Your FPGA design still needs the
-protocol logic. Plugging in a copper Ethernet module does not create an
-Ethernet controller by itself.
-
-The FPGA lanes top out around 6.6 Gb/s, while the fitted Amphenol
-U77A11133001 cage is listed at 2.5 Gb/s. The complete port is unqualified
-above that cage rating. Use them for 1 Gb/s or suitable 2.5 Gb/s
-links, not 10 Gb/s modules.
-
-There are exactly two SFP ports. The FPGA's other fast lanes are unused.
-
-An I²C switch gives each module a separate identity channel, so both can
-remain powered while supervisor firmware reads their EEPROMs at 0x50.
-Firmware must select only one channel at a time; see the
-[management-bus contract](sfp-i2c.md). Module power remains shared: a power
-shutdown stops both ports. The identity console feature still requires
-supervisor firmware.
+**LINK P** and **LINK Q** are not Ethernet. They carry eight LVDS pairs
+straight from FPGA pins to a shielded twisted-pair cable, for board-to-board
+links between two of these boards. Cable **P to Q**, use STP cable, and
+**power both boards before connecting the cable**: the pins are DC coupled
+and the receiving board must be powered first. See
+[link-ports.md](link-ports.md) for the pinout and [network.md](network.md)
+for the PHY.
 
 ## If something goes wrong
 
@@ -467,13 +475,13 @@ current.
 - Remove the extension and try again.
 - Use a USB-PD charger instead of a computer port.
 - Check the extension for a short.
-- Start with SLOT POWER unselected or set to 3.3 V.
+- Start with AUX IN unconnected.
 
 ### An extension does nothing
 
 - Check the guide pin and header alignment.
 - Check PIN VOLTAGE for the whole group.
-- Check its SLOT POWER selector.
+- Check whether it needs AUX, and what AUX IN is wired to.
 - Remember that each 5V BUS uses one shared direction control.
 - Remember that a blown or tripped branch fuse is not fixed by HDL.
 
@@ -497,7 +505,7 @@ fault until it works alone on a current-limited bench supply.
 4. Each 5V BUS is a complete eight-bit bus with shared direction.
 5. The four connector rails share the board's total power.
 6. Never feed power into an Odin power-output pin.
-7. Start a new extension at 3.3 V with SLOT POWER unselected.
+7. Start a new extension at 3.3 V with AUX IN unconnected.
 8. Test one extension before stacking several.
 9. Use a PD charger for power-heavy projects.
 10. When in doubt, unplug power first.
@@ -511,7 +519,7 @@ before shipping hardware:
 - Extension-rail shutdown and fault behavior
 - Final connector positions and orientation drawing
 - Board-controller status messages and firmware-loading names
-- Qualified SFP module types
+- PHY bring-up register sequence and link-port data rate
 - Board revision and matching schematic commit
 
 Until those are fixed, this is the user contract for the design—not permission
@@ -533,9 +541,22 @@ is running correctly. Ignore the indicator while supplies are ramping.
 Three additional green indicators are fitted: **CTRL HB**, **USER 1** and
 **USER 2**. They default off. Supervisor firmware can blink CTRL HB from its
 main service loop and expose USER 1/2 to applications; that firmware remains
-to be implemented. A frozen heartbeat indicates lost progress or an I2C-bus
-fault, while a steady lit LED alone does not establish health.
+to be implemented. A frozen heartbeat indicates lost progress, while a
+steady lit LED alone does not establish health. The three LEDs hang
+directly off supervisor GPIO35-37 (low lights them).
 
-The supervisor can also read the core regulator's **CORE_1V0_GOOD** through
-the same expander, alongside its existing MON_1V0 voltage measurement.
+The supervisor also reads the core regulator's **CORE_1V0_GOOD** on GPIO38,
+alongside its existing MON_1V0 voltage measurement.
 See [status indicators and firmware rules](status-leds.md).
+
+## Memory
+
+| Part | LCSC | Capacity | Bus | Voltage | FPGA bank | Populated by default |
+|---|---|---|---|---|---|---|
+| APS6404L-SQN-SN PSRAM, x4 (U2-U5) | C5360304 | 4 x 8 MB | QSPI, one private 6-line port per chip | 1.8 V | 13 | yes |
+| W9825G6KH-6 SDRAM (U32) | C62246 | 32 MB | 16-bit SDR, 39 lines | 3.3 V | 35 (data, control), 14 (address) | yes |
+| MR25H10CDF MRAM (U33) | C246234 | 128 KB | SPI, 4 lines | 3.3 V | 14 | yes |
+| microSD socket TF-01A (J74) | C91145 | card | SPI mode, 5 lines incl. card detect | 3.3 V | 14 | yes |
+| W25Q256JVEIQ configuration flash (U6) | C97522 | 32 MB | QSPI, master SPI boot | 3.3 V | 14 and bank 0 | yes |
+
+Ball-by-ball list: `ref/ballmap.md`; constraints: `ref/freya.xdc`.

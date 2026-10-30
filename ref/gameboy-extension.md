@@ -84,14 +84,14 @@ gives it four times the single-module current budget.
 |---|---|
 | 4 contiguous **direct** slots in one bank | Tier 2 needs a 64 with nothing in the signal path and one voltage domain |
 | +5V able to source **≥1 A** to extensions | class-D amp peaks |
-| AUX jumperable to 12V on those slots | backlight; 12V is boosted on-board so it works on any USB source |
+| AUX at 12 V on those slots | backlight; 12 V has to be wired to AUX IN, there is no on-board boost |
 | **PSRAM reachable from fabric** | see framebuffer note below |
 | Board oscillator + MMCM | extension carries no crystal |
 
 **Framebuffer.** 320×240 RGB565 is 150 KB; the `XC7A100T` has enough internal
 block RAM for the framebuffer, so
 it fits but eats most of it. 480×272 is 261 KB and does not leave room for a
-NEORV32 with any cache. The 4× `APS1604M` PSRAM on the base board (8 MB) is
+NEORV32 with any cache. The 4× `APS6404L` PSRAM on the base board (32 MB) is
 what makes a comfortable framebuffer possible — so the LCD path should be
 designed as PSRAM framebuffer + line buffer in BRAM, not BRAM framebuffer.
 
