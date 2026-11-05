@@ -16,6 +16,8 @@ mechanical one does. DRC violations and unrouted counts are reported, not
 gated: the board is not routed yet.
 """
 import collections, json, os, re, subprocess, sys, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import netlist
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
@@ -27,7 +29,7 @@ def run(cmd, **kw):
 
 
 def parts_and_sheets():
-    s = open('kicad/odin.net').read()
+    s = netlist.read('kicad/odin.net')
     comps = re.findall(r'\(comp \(ref "([^"]+)"\)[\s\S]*?\(sheetpath \(names "([^"]*)"', s)
     by = collections.Counter(n.strip('/') or 'root' for _, n in comps)
     return len(comps), dict(sorted(by.items()))

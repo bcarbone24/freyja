@@ -7,6 +7,7 @@ Outputs kicad/odin.kicad_sym and kicad/odin.pretty/*.kicad_mod
 import re, os
 from collections import defaultdict, OrderedDict
 from identity import FPGA_PART
+import kicadshare
 
 PKG   = 'easyeda/EasyEDA.kicad_sym'
 SYM   = 'kicad/odin.kicad_sym'
@@ -248,7 +249,7 @@ CUSTOM_RAILS = ['VCCIO_1', 'VCCIO_2', '+1V0_MGT', '+1V2_MGT', '+1V8_IO', 'VSYS',
 
 def gen_rails():
     """Clone KiCad's +3V3 power symbol for the rails it does not ship."""
-    t = open('/usr/share/kicad/symbols/power.kicad_sym').read()
+    t = open(kicadshare.symbol('power.kicad_sym')).read()
     i = t.index('(symbol "+3V3"')
     dep, j = 1, i + len('(symbol "+3V3"')
     while dep > 0:
@@ -267,7 +268,7 @@ def gen_lxc():
     """SN74LXC8T245PW: 1.1-5.5V both rails, direction-controlled. KiCad ships
     no symbol; TI's 8-bit '245 translators are pin-compatible in TSSOP-24, so
     this is AVC8T245's symbol renamed. Pinout flagged in findings.md."""
-    t = open('/usr/share/kicad/symbols/Logic_LevelTranslator.kicad_sym').read()
+    t = open(kicadshare.symbol('Logic_LevelTranslator.kicad_sym')).read()
     i = t.index('(symbol "SN74AVC8T245PW"')
     d, j = 1, i + len('(symbol "SN74AVC8T245PW"')
     while d > 0:
@@ -476,7 +477,7 @@ def gen_mram_fp():
     open(f'{PRET}/{MRAM_FP}.kicad_mod', 'w').write(t)
     return t.count('(pad ')
 
-USBC_SRC = '/usr/share/kicad/footprints/Connector_USB.pretty/USB_C_Receptacle_HCTL_HC-TYPE-C-16P-01A.kicad_mod'
+USBC_SRC = kicadshare.footprint('Connector_USB.pretty/USB_C_Receptacle_HCTL_HC-TYPE-C-16P-01A.kicad_mod')
 USBC_FP = 'USB_C_Receptacle_HCTL_HC-TYPE-C-16P-01A_Odin'
 
 def gen_usbc_fp():

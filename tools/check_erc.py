@@ -19,10 +19,13 @@ EXPECTED = Counter({
     ('warning', 'global_label_dangling', ("Global Label 'FPGA_DXP'",)): 1,
     ('warning', 'global_label_dangling', ("Global Label 'FPGA_DXN'",)): 1,
 })
+# KiCad 10 reports a global label that reaches a single pin as
+# isolated_pin_label; KiCad 9 called the same finding global_label_dangling.
+RULE_ALIASES = {'isolated_pin_label': 'global_label_dangling'}
 
 
 def signature(violation):
-    return (violation['severity'], violation['type'],
+    return (violation['severity'], RULE_ALIASES.get(violation['type'], violation['type']),
             tuple(sorted(item['description'] for item in violation['items'])))
 
 

@@ -3,6 +3,7 @@
 Every ball gets a net; unassigned I/O get no-connect flags so ERC is meaningful."""
 import sys, os, re, uuid, hashlib
 sys.path.insert(0, os.path.dirname(__file__))
+import kicadshare
 from alloc import assign, load
 from identity import FPGA_PART
 from collections import OrderedDict
@@ -64,7 +65,7 @@ def sym_units():
         units[idx] = pins
     return body, units
 
-PWRLIB = '/usr/share/kicad/symbols/power.kicad_sym'
+PWRLIB = kicadshare.symbol('power.kicad_sym')
 
 def pwr_flag_def():
     """Lift the genuine PWR_FLAG out of KiCad's own library so the embedded copy

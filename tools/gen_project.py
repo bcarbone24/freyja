@@ -7,13 +7,13 @@ connect to. Power and ground use real power symbols, so only actual signals
 carry a label."""
 import sys, os, re, uuid, hashlib
 sys.path.insert(0, os.path.dirname(__file__))
-import symlib, textwrap
+import symlib, textwrap, kicadshare
 from design import build
 from roles import annotate
 from identity import PRODUCT, HW_VERSION
 
 DIR    = 'kicad'
-PWRLIB = '/usr/share/kicad/symbols/power.kicad_sym'
+PWRLIB = kicadshare.symbol('power.kicad_sym')
 SHEETS = ['FPGA', 'Power', 'Memory', 'Supervisor', 'Slots', 'Network', 'Video']
 DISPLAY_NAME = {'Supervisor': 'Board Controller'}
 TITLE  = {'FPGA':'FPGA, decoupling and configuration straps',
