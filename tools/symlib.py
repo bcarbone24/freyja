@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read symbols out of any KiCad symbol library: pin name->numbers, units, and the
 raw s-expression block so it can be embedded in a generated schematic."""
-import os, re, glob
-SYSDIRS = ['/usr/share/kicad/symbols', '/usr/local/share/kicad/symbols']
+import os, re, glob, kicadshare
+SYSDIRS = kicadshare.dirs('SYMBOL')
 
 def libpath(lib):
     if lib == 'EasyEDA' and os.path.exists('easyeda/EasyEDA.kicad_sym'):

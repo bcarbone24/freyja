@@ -7,6 +7,7 @@ labels are footprint fields, so they move and rotate with the footprint.
 """
 import re
 import pcbnew
+import netlist, pcbfields
 from identity import PRODUCT, HW_VERSION
 
 BOARD = 'kicad/odin.kicad_pcb'
@@ -57,9 +58,9 @@ PART_ID_OFFSETS = {
 }
 
 def add_field(fp, name, text, x_mm, y_mm, size_mm=0.8):
-    if fp.HasFieldByName(name):
-        fp.RemoveField(name)
-    field = pcbnew.PCB_FIELD(fp, fp.GetNextFieldId(), name)
+    if pcbfields.has(fp, name):
+        pcbfields.remove(fp, name)
+    field = pcbfields.new(fp, name)
     field.SetText(text)
     field.SetLayer(pcbnew.F_SilkS)
     field.SetVisible(True)
@@ -67,13 +68,12 @@ def add_field(fp, name, text, x_mm, y_mm, size_mm=0.8):
     field.SetTextThickness(pcbnew.FromMM(0.15))
     field.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT)
     field.SetFPRelativePosition(pcbnew.VECTOR2I(pcbnew.FromMM(x_mm), pcbnew.FromMM(y_mm)))
-    fp.AddField(field)
 
 def main():
     board = pcbnew.LoadBoard(BOARD)
-    netlist = open(NETLIST).read()
+    text = netlist.read(NETLIST)
     schematic_values = {}
-    section = netlist[netlist.index('(components'):netlist.index('(libparts')]
+    section = text[text.index('(components'):text.index('(libparts')]
     for chunk in section.split('(comp (ref "')[1:]:
         ref = chunk[:chunk.index('"')]
         value = re.search(r'\(value "([^"]*)"\)', chunk)

@@ -45,6 +45,14 @@ python3 tools/gate.py           # every phase check in one run (ref/rev-a-report
 `load_pcb.py` reads `kicad/odin.net`, so export the netlist before running it
 or you will load the previous revision's parts.
 
+**Windows.** Stock KiCad libraries are found via `tools/kicadshare.py`
+(`KICAD*_SYMBOL_DIR` / `KICAD*_FOOTPRINT_DIR`, else the usual install
+locations). Set `PYTHONUTF8=1` first (the sources are UTF-8; Windows Python
+otherwise reads cp1252). Scripts that `import pcbnew` (`load_pcb.py`,
+`check_positions.py`, `place.py`, and `gate.py`, which runs them) need
+KiCad's own interpreter, e.g. `"C:\Program Files\KiCad\10.0\bin\python.exe"
+tools/gate.py`.
+
 `tools/budget.py --write` currently passes and regenerates the power budget.
 The input-voltage issue in findings item 20 is fixed. The command exits
 non-zero if a load, input-window or inductor qualification check fails.

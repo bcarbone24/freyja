@@ -4,12 +4,14 @@
 This is what 'Update PCB from Schematic' does in the GUI. Existing references
 retain their authoritative position, rotation, side and locked state. Only new
 references enter the coarse import band outside the board."""
-import re, sys, os, json
+import re, sys, os, json, tempfile
 import pcbnew
+sys.path.insert(0, os.path.dirname(__file__))
+import kicadshare, netlist, pcbfields
 
 BOARD = 'kicad/odin.kicad_pcb'
 NET   = 'kicad/odin.net'
-LIBS  = ['/usr/share/kicad/footprints', os.path.abspath('kicad')]
+LIBS  = kicadshare.dirs('FOOTPRINT') + [os.path.abspath('kicad')]
 
 def libdir(fp_id):
     lib, name = fp_id.split(':', 1)
@@ -21,7 +23,7 @@ def libdir(fp_id):
     raise FileNotFoundError(fp_id)
 
 def parse():
-    t = open(NET).read()
+    t = netlist.read(NET)
     comps = {}
     # split on component boundaries rather than regex the whole section: the
     # last entry's terminator differs and a lookahead silently drops it
@@ -41,13 +43,15 @@ def parse():
                           sheet=sh.group(1) if sh else '/',
                           dnp='(property (name "dnp")' in chunk)
     nets = {}
-    for m in re.finditer(r'\(net \(code "\d+"\) \(name "([^"]+)"\)(.*?)(?=\n    \(net \(code|\Z)',
+    for m in re.finditer(r'\(net \(code "\d+"\) \(name "([^"]+)"\)(.*?)(?= \(net \(code|\Z)',
                          t, re.S):
         nets[m.group(1)] = re.findall(r'\(node \(ref "([^"]+)"\) \(pin "([^"]+)"\)', m.group(2))
     return comps, nets
 
 def main():
     comps, nets = parse()
+    if not comps or not nets:
+        raise SystemExit(f'PCB NOT SAVED: {NET} parsed to {len(comps)} parts, {len(nets)} nets')
     board = pcbnew.LoadBoard(BOARD)
     old_fps = {fp.GetReference(): fp for fp in board.GetFootprints()}
     old = {ref: dict(pos=(fp.GetPosition().x, fp.GetPosition().y),
@@ -60,9 +64,11 @@ def main():
         if n is None:
             n = pcbnew.NETINFO_ITEM(board, name); board.Add(n)
         netmap[name] = n
-    pin2net = {}
+    pin2net, pins = {}, {}
     for name, nodes in nets.items():
-        for ref, pin in nodes: pin2net[(ref, pin)] = name
+        for ref, pin in nodes:
+            pin2net[(ref, pin)] = name
+            pins.setdefault(ref, set()).add(pin)
 
     # coarse placement: a band per sheet, outside the board outline so the
     # human can drag groups in rather than untangle a pile in the middle
@@ -93,7 +99,10 @@ def main():
             nm = c['fp'].split(':', 1)[1]
             prior = old_fps.get(ref)
             replace = (prior is None or str(prior.GetFPID().GetLibItemName()) != nm
-                       or str(prior.GetFPID().GetLibNickname()) != c['fp'].split(':', 1)[0])
+                       or str(prior.GetFPID().GetLibNickname()) != c['fp'].split(':', 1)[0]
+                       # same name, but the library copy renumbered its pads
+                       # (KiCad 10's stock USB-C shield S1 -> SH)
+                       or not pins.get(ref, set()) <= {p.GetNumber() for p in prior.Pads()})
             if replace and prior is not None: changed.append(ref)
             if replace:
                 try:
@@ -113,7 +122,7 @@ def main():
             fp.SetReference(ref); fp.SetValue(c['value'])
             # What the part is for (tools/roles.py), in KiCad's standard
             # Description field (Footprint Properties dialog), never printed.
-            fp.GetFieldByName('Description').SetText(c.get('role', ''))
+            pcbfields.get(fp, 'Description').SetText(c.get('role', ''))
             # The same text as the library description, which is what KiCad
             # shows in the bottom message bar on a single click and as
             # "Library Description" in the Properties panel.
@@ -121,12 +130,15 @@ def main():
             # The order number travels with the schematic symbol; the copy an
             # imported footprint carries is only refreshed here, so a part
             # swap that keeps its package cannot leave the old number behind.
+            # 'LCSC' mirrors the symbol field itself, which KiCad 10 parity
+            # (footprint_symbol_field_mismatch) requires on the footprint.
             if c.get('lcsc'):
-                fld = fp.GetFieldByName('LCSC Part')
-                if fld is None:
-                    fld = fp.AddField(pcbnew.PCB_FIELD(fp, -1, 'LCSC Part'))
-                    fld.SetVisible(False)
-                fld.SetText(c['lcsc'])
+                for name in ('LCSC Part', 'LCSC'):
+                    fld = pcbfields.get(fp, name)
+                    if fld is None:
+                        fld = pcbfields.new(fp, name)
+                        fld.SetVisible(False)
+                    fld.SetText(c['lcsc'])
             fp.SetDNP(bool(c.get('dnp')))
             if replace:
                 # A package change swaps the footprint object; the island
@@ -178,7 +190,7 @@ def main():
     changes = dict(added=sorted(current.keys() - old.keys()),
                    removed=sorted(old.keys() - current.keys()),
                    changed_in_place=sorted(changed), moved=moved)
-    with open('/tmp/odin-sync-changes.json', 'w') as report:
+    with open(os.path.join(tempfile.gettempdir(), 'odin-sync-changes.json'), 'w') as report:
         json.dump(changes, report, indent=2)
     print(json.dumps(changes, indent=2))
     print(f"placed {placed} footprints, {len(netmap)} nets"
